@@ -12,7 +12,7 @@
 #include <linux/tcp.h>
 
 static struct nf_hook_ops nfho;
-
+static unsigned long bloked_port;
 static unsigned int hook_func(void* priv, struct sk_buff *skb, const struct nf_hook_state* state)
 {
     struct iphdr *ip_header = (struct iphdr *)skb_network_header(skb);
@@ -23,7 +23,7 @@ static unsigned int hook_func(void* priv, struct sk_buff *skb, const struct nf_h
         tcp_header= (struct tcphdr *)((__u32 *)ip_header+ ip_header->ihl);
         dest = ntohs(tcp_header->dest);
         source = ntohs(tcp_header->source);
-        if(source == 80)
+        if(source == bloked_port)
         {
             printk("TCP Source Port: %u, Dest Port: %u bloked\n", source, dest);
 	    return NF_DROP;
@@ -31,22 +31,23 @@ static unsigned int hook_func(void* priv, struct sk_buff *skb, const struct nf_h
     }
     return NF_ACCEPT; //accept the packet
 }
-#define USER_BUF_PAGE 4096
+
+
 static ssize_t f_proc_write(struct file *file, const char __user *ubuf,
 				  size_t len, loff_t *offp)
 {
-	char *tmpbuf;
-
+	char tmpbuf[80];
 	if (len == 0)
 		return 0;
-	tmpbuf = memdup_user_nul(ubuf, len);
-	printk("read %d bytes from userspace %s\n", (int)len,tmpbuf);
+	int i=0;
+        for ( i = 0; i < len; i++)
+           get_user(tmpbuf[i],ubuf + i);
 
-//	ret = ddebug_exec_queries(tmpbuf, NULL);
-	kfree(tmpbuf);
-
-	*offp += len;
-	return len;
+         tmpbuf[i] = '\0';    /* Обычная строка, завершающаяся символом \0 */
+	// bloked_port=atoi(tmpbuf);
+	kstrtoul(tmpbuf,10,&bloked_port);
+	 printk("Заблокирован TCP порт %li\n",bloked_port);
+       return i;
 }
 static const struct file_operations file_fops = {
     // .open = tasks_proc_open,
@@ -60,9 +61,9 @@ static const struct file_operations file_fops = {
 static int __init init_hook(void)
 {
 	int retval;
+	bloked_port=-1;
     nfho.hook = hook_func;
     nfho.hooknum  = NF_INET_PRE_ROUTING;
-    //nfho.hooknum = NF_INET_LOCAL_IN;
     nfho.pf = PF_INET;
     nfho.priority = NF_IP_PRI_FIRST;
     retval = nf_register_net_hook(&init_net, &nfho);
@@ -78,6 +79,7 @@ static void __exit cleanup_hook(void)
 {
     nf_unregister_net_hook(&init_net, &nfho);
     printk("Unregistered the net hook.\n");
+    remove_proc_entry("Tcp_block_port",NULL);
 }
 
   MODULE_LICENSE("GPL"); 
